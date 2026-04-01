@@ -33,7 +33,15 @@ go build -o micro-rss-bot .
 sudo cp micro-rss-bot /usr/local/bin/
 ```
 
-### 2. ユニットファイルを作成
+### 2. トークンファイルを作成
+
+```bash
+sudo mkdir -p /etc/micro-rss-bot
+echo 'DISCORD_TOKEN=your-token-here' | sudo tee /etc/micro-rss-bot/env
+sudo chmod 600 /etc/micro-rss-bot/env
+```
+
+### 3. ユニットファイルを作成
 
 ```bash
 sudo vi /etc/systemd/system/micro-rss-bot.service
@@ -47,7 +55,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Environment=DISCORD_TOKEN=your-token-here
+EnvironmentFile=/etc/micro-rss-bot/env
 Environment=DB_PATH=/var/lib/micro-rss-bot/data.db
 ExecStart=/usr/local/bin/micro-rss-bot
 Restart=on-failure
@@ -62,14 +70,14 @@ WorkingDirectory=/var/lib/micro-rss-bot
 WantedBy=multi-user.target
 ```
 
-### 3. 起動
+### 4. 起動
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now micro-rss-bot
 ```
 
-### 4. ログ確認
+### 5. ログ確認
 
 ```bash
 journalctl -u micro-rss-bot -f
