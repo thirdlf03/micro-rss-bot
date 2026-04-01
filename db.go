@@ -18,7 +18,9 @@ func OpenDB(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
 	db.Exec("PRAGMA journal_mode=WAL")
+	db.Exec("PRAGMA busy_timeout=5000")
 	db.Exec("PRAGMA foreign_keys=ON")
 	if err := InitDB(db); err != nil {
 		db.Close()
