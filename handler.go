@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -23,7 +24,7 @@ var commands = []*discordgo.ApplicationCommand{
 				Options: []*discordgo.ApplicationCommandOption{
 					{
 						Name:        "url",
-						Description: "Feed URL",
+						Description: "Feed URLs (space-separated for multiple)",
 						Type:        discordgo.ApplicationCommandOptionString,
 						Required:    true,
 					},
@@ -144,17 +145,29 @@ func (h *Handler) Handle(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func (h *Handler) handleAdd(sub *discordgo.ApplicationCommandInteractionDataOption) string {
-	url := sub.Options[0].StringValue()
+	urls := strings.Fields(sub.Options[0].StringValue())
 
+	if len(urls) == 1 {
+		return h.addSingleFeed(urls[0])
+	}
+
+	var results []string
+	for _, u := range urls {
+		results = append(results, h.addSingleFeed(u))
+	}
+	return strings.Join(results, "\n")
+}
+
+func (h *Handler) addSingleFeed(url string) string {
 	fp := gofeed.NewParser()
 	feed, err := fp.ParseURL(url)
 	if err != nil {
-		return fmt.Sprintf("❌ フィードを取得できませんでした: %v", err)
+		return fmt.Sprintf("❌ `%s`: フィードを取得できませんでした", url)
 	}
 
 	id, err := AddFeed(h.db, url, feed.Title)
 	if err != nil {
-		return fmt.Sprintf("❌ 追加に失敗しました: %v", err)
+		return fmt.Sprintf("❌ `%s`: 追加に失敗しました: %v", feed.Title, err)
 	}
 
 	// 既存記事を既読にして初回大量投稿を防ぐ
