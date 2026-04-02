@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -163,5 +164,89 @@ func TestDiscoverFromRSSBridge_NoResult(t *testing.T) {
 	_, err := discoverFromRSSBridge("https://example.com/blog", bridgeSrv.URL)
 	if err == nil {
 		t.Error("expected error for empty result")
+	}
+}
+
+func TestExtractAnchorSnippets(t *testing.T) {
+	html := `<html><body>
+		<script>var x = 1;</script>
+		<nav><a href="/about">About</a></nav>
+		<div class="posts">
+			<article><a href="/posts/1" class="post-link">First Post</a></article>
+			<article><a href="/posts/2" class="post-link">Second Post</a></article>
+		</div>
+		<a href="#">Skip</a>
+		<a href="javascript:void(0)">JS</a>
+	</body></html>`
+
+	snippets := extractAnchorSnippets(html)
+	if len(snippets) != 3 {
+		t.Errorf("expected 3 snippets, got %d: %v", len(snippets), snippets)
+	}
+}
+
+func TestBuildCssSelectorBridgeURL(t *testing.T) {
+	result := buildCssSelectorBridgeURL(
+		"https://example.com/blog",
+		"a.post-link",
+		"h2.title",
+		"",
+		"http://localhost:3000",
+	)
+	if !strings.Contains(result, "bridge=CssSelectorBridge") {
+		t.Error("expected CssSelectorBridge in URL")
+	}
+	if !strings.Contains(result, "home_page=") {
+		t.Error("expected home_page in URL")
+	}
+	if !strings.Contains(result, "url_selector=") {
+		t.Error("expected url_selector in URL")
+	}
+}
+
+func TestDiscoverFromLLM(t *testing.T) {
+	geminiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"candidates": [{
+				"content": {
+					"parts": [{
+						"text": "{\"url_selector\": \"a.post-link\", \"title_selector\": null, \"content_selector\": null}"
+					}]
+				}
+			}]
+		}`))
+	}))
+	defer geminiSrv.Close()
+
+	bridgeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("bridge") == "CssSelectorBridge" {
+			w.Header().Set("Content-Type", "application/xml")
+			w.Write([]byte(testRSS))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer bridgeSrv.Close()
+
+	blogSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body>
+			<a href="/posts/1" class="post-link">Post 1</a>
+			<a href="/posts/2" class="post-link">Post 2</a>
+		</body></html>`))
+	}))
+	defer blogSrv.Close()
+
+	origEndpoint := geminiEndpoint
+	geminiEndpoint = geminiSrv.URL + "/"
+	defer func() { geminiEndpoint = origEndpoint }()
+
+	result, err := discoverFromLLM(blogSrv.URL, bridgeSrv.URL, "test-api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "CssSelectorBridge") {
+		t.Errorf("expected CssSelectorBridge URL, got %s", result)
 	}
 }
