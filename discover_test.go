@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -127,5 +128,40 @@ func TestDiscoverFromHTML_DirectRSSURL(t *testing.T) {
 	}
 	if result != srv.URL {
 		t.Errorf("expected %s, got %s", srv.URL, result)
+	}
+}
+
+func TestDiscoverFromRSSBridge_FullFlow(t *testing.T) {
+	feedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(testRSS))
+	}))
+	defer feedSrv.Close()
+
+	bridgeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(fmt.Sprintf(`[{"url":"%s"}]`, feedSrv.URL)))
+	}))
+	defer bridgeSrv.Close()
+
+	result, err := discoverFromRSSBridge("https://example.com/blog", bridgeSrv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != feedSrv.URL {
+		t.Errorf("expected %s, got %s", feedSrv.URL, result)
+	}
+}
+
+func TestDiscoverFromRSSBridge_NoResult(t *testing.T) {
+	bridgeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
+	}))
+	defer bridgeSrv.Close()
+
+	_, err := discoverFromRSSBridge("https://example.com/blog", bridgeSrv.URL)
+	if err == nil {
+		t.Error("expected error for empty result")
 	}
 }
