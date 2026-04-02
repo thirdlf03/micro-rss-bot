@@ -310,3 +310,262 @@ func TestDiscoverFeed_DirectRSSURL(t *testing.T) {
 		t.Errorf("expected Stage 1, got Stage %d", result.Stage)
 	}
 }
+
+// --- Error path tests ---
+
+func TestDiscoverFromRSSBridge_HTTPError(t *testing.T) {
+	bridgeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer bridgeSrv.Close()
+
+	_, err := discoverFromRSSBridge("https://example.com", bridgeSrv.URL)
+	if err == nil {
+		t.Error("expected error for HTTP 500")
+	}
+}
+
+func TestDiscoverFromRSSBridge_InvalidJSON(t *testing.T) {
+	bridgeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`not json`))
+	}))
+	defer bridgeSrv.Close()
+
+	_, err := discoverFromRSSBridge("https://example.com", bridgeSrv.URL)
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestDiscoverFromRSSBridge_InvalidFeedURL(t *testing.T) {
+	bridgeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"url":"http://127.0.0.1:1/nonexistent"}]`))
+	}))
+	defer bridgeSrv.Close()
+
+	_, err := discoverFromRSSBridge("https://example.com", bridgeSrv.URL)
+	if err == nil {
+		t.Error("expected error for invalid feed URL")
+	}
+}
+
+func TestCallGemini_HTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":"forbidden"}`))
+	}))
+	defer srv.Close()
+
+	origEndpoint := geminiEndpoint
+	geminiEndpoint = srv.URL + "/"
+	defer func() { geminiEndpoint = origEndpoint }()
+
+	_, err := callGemini("bad-key", "system", "user prompt")
+	if err == nil {
+		t.Error("expected error for HTTP 403")
+	}
+}
+
+func TestCallGemini_EmptyResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"candidates":[]}`))
+	}))
+	defer srv.Close()
+
+	origEndpoint := geminiEndpoint
+	geminiEndpoint = srv.URL + "/"
+	defer func() { geminiEndpoint = origEndpoint }()
+
+	_, err := callGemini("key", "system", "user prompt")
+	if err == nil {
+		t.Error("expected error for empty candidates")
+	}
+}
+
+func TestCallGemini_MalformedJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{broken`))
+	}))
+	defer srv.Close()
+
+	origEndpoint := geminiEndpoint
+	geminiEndpoint = srv.URL + "/"
+	defer func() { geminiEndpoint = origEndpoint }()
+
+	_, err := callGemini("key", "system", "user prompt")
+	if err == nil {
+		t.Error("expected error for malformed JSON")
+	}
+}
+
+func TestDiscoverFromLLM_NoLinks(t *testing.T) {
+	blogSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body><p>No links here</p></body></html>`))
+	}))
+	defer blogSrv.Close()
+
+	_, err := discoverFromLLM(blogSrv.URL, "http://bridge", "key")
+	if err == nil {
+		t.Error("expected error for page with no links")
+	}
+}
+
+func TestDiscoverFromLLM_LLMReturnsInvalidJSON(t *testing.T) {
+	geminiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"candidates": [{"content": {"parts": [{"text": "no json here"}]}}]
+		}`))
+	}))
+	defer geminiSrv.Close()
+
+	blogSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body><a href="/post/1">Post</a></body></html>`))
+	}))
+	defer blogSrv.Close()
+
+	origEndpoint := geminiEndpoint
+	geminiEndpoint = geminiSrv.URL + "/"
+	defer func() { geminiEndpoint = origEndpoint }()
+
+	_, err := discoverFromLLM(blogSrv.URL, "http://bridge", "key")
+	if err == nil {
+		t.Error("expected error for invalid LLM JSON")
+	}
+}
+
+func TestDiscoverFromLLM_EmptySelector(t *testing.T) {
+	geminiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"candidates": [{"content": {"parts": [{"text": "{\"url_selector\": \"\", \"title_selector\": null, \"content_selector\": null}"}]}}]
+		}`))
+	}))
+	defer geminiSrv.Close()
+
+	blogSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body><a href="/post/1">Post</a></body></html>`))
+	}))
+	defer blogSrv.Close()
+
+	origEndpoint := geminiEndpoint
+	geminiEndpoint = geminiSrv.URL + "/"
+	defer func() { geminiEndpoint = origEndpoint }()
+
+	_, err := discoverFromLLM(blogSrv.URL, "http://bridge", "key")
+	if err == nil {
+		t.Error("expected error for empty url_selector")
+	}
+}
+
+func TestDiscoverFeed_AllStagesFail(t *testing.T) {
+	blogSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(testHTMLNoFeed))
+	}))
+	defer blogSrv.Close()
+
+	bridgeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
+	}))
+	defer bridgeSrv.Close()
+
+	t.Setenv("RSS_BRIDGE_URL", bridgeSrv.URL)
+	t.Setenv("GEMINI_API_KEY", "")
+
+	progress := func(stage int, msg string) {}
+	_, err := DiscoverFeed(blogSrv.URL, progress)
+	if err == nil {
+		t.Error("expected error when all stages fail")
+	}
+}
+
+func TestDiscoverFeed_Stage3Flow(t *testing.T) {
+	geminiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"candidates": [{"content": {"parts": [{"text": "{\"url_selector\": \"a.post\", \"title_selector\": null, \"content_selector\": null}"}]}}]
+		}`))
+	}))
+	defer geminiSrv.Close()
+
+	bridgeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("action") == "findfeed" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`[]`))
+			return
+		}
+		if r.URL.Query().Get("bridge") == "CssSelectorBridge" {
+			w.Header().Set("Content-Type", "application/xml")
+			w.Write([]byte(testRSS))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer bridgeSrv.Close()
+
+	blogSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body><a href="/p/1" class="post">Post</a></body></html>`))
+	}))
+	defer blogSrv.Close()
+
+	origEndpoint := geminiEndpoint
+	geminiEndpoint = geminiSrv.URL + "/"
+	defer func() { geminiEndpoint = origEndpoint }()
+
+	t.Setenv("RSS_BRIDGE_URL", bridgeSrv.URL)
+	t.Setenv("GEMINI_API_KEY", "test-key")
+
+	var stages []int
+	progress := func(stage int, msg string) {
+		stages = append(stages, stage)
+	}
+
+	result, err := DiscoverFeed(blogSrv.URL, progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stage != 3 {
+		t.Errorf("expected Stage 3, got Stage %d", result.Stage)
+	}
+	if len(stages) != 3 {
+		t.Errorf("expected 3 stages, got %v", stages)
+	}
+}
+
+func TestExtractAnchorSnippets_LongText(t *testing.T) {
+	longText := strings.Repeat("a", 100)
+	html := fmt.Sprintf(`<html><body><a href="/post">%s</a></body></html>`, longText)
+	snippets := extractAnchorSnippets(html)
+	if len(snippets) != 1 {
+		t.Fatalf("expected 1 snippet, got %d", len(snippets))
+	}
+	// Text should be truncated to 80 chars
+	if strings.Contains(snippets[0], longText) {
+		t.Error("expected text to be truncated")
+	}
+}
+
+func TestBuildCssSelectorBridgeURL_AllSelectors(t *testing.T) {
+	result := buildCssSelectorBridgeURL(
+		"https://example.com",
+		"a.link",
+		"h2.title",
+		"p.summary",
+		"http://bridge:3000",
+	)
+	if !strings.Contains(result, "title_selector=") {
+		t.Error("expected title_selector in URL")
+	}
+	if !strings.Contains(result, "content_selector=") {
+		t.Error("expected content_selector in URL")
+	}
+}
