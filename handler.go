@@ -226,7 +226,6 @@ func (h *Handler) handleInterval(sub *discordgo.ApplicationCommandInteractionDat
 }
 
 func RegisterCommands(s *discordgo.Session, h *Handler) {
-	s.AddHandler(h.Handle)
 	for _, cmd := range commands {
 		_, err := s.ApplicationCommandCreate(s.State.User.ID, "", cmd)
 		if err != nil {
