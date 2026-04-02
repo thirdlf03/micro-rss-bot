@@ -121,11 +121,25 @@ func (h *Handler) Handle(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 
 	sub := data.Options[0]
-	var content string
 
+	// "add" uses deferred response for progress display
+	if sub.Name == "add" {
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		})
+		content := h.handleAdd(sub, func(msg string) {
+			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: &msg,
+			})
+		})
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &content,
+		})
+		return
+	}
+
+	var content string
 	switch sub.Name {
-	case "add":
-		content = h.handleAdd(sub)
 	case "list":
 		content = h.handleList()
 	case "edit":
@@ -144,42 +158,52 @@ func (h *Handler) Handle(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	})
 }
 
-func (h *Handler) handleAdd(sub *discordgo.ApplicationCommandInteractionDataOption) string {
+func (h *Handler) handleAdd(sub *discordgo.ApplicationCommandInteractionDataOption, updateProgress func(string)) string {
 	urls := strings.Fields(sub.Options[0].StringValue())
 
 	if len(urls) == 1 {
-		return h.addSingleFeed(urls[0])
+		return h.addSingleFeed(urls[0], updateProgress)
 	}
 
 	var results []string
 	for _, u := range urls {
-		results = append(results, h.addSingleFeed(u))
+		results = append(results, h.addSingleFeed(u, updateProgress))
 	}
 	return strings.Join(results, "\n")
 }
 
-func (h *Handler) addSingleFeed(url string) string {
-	fp := gofeed.NewParser()
-	feed, err := fp.ParseURL(url)
-	if err != nil {
-		return fmt.Sprintf("❌ `%s`: フィードを取得できませんでした", url)
+func (h *Handler) addSingleFeed(rawURL string, updateProgress func(string)) string {
+	progress := func(stage int, msg string) {
+		updateProgress(fmt.Sprintf("`%s`\n%s", rawURL, msg))
 	}
 
-	id, err := AddFeed(h.db, url, feed.Title)
+	result, err := DiscoverFeed(rawURL, progress)
 	if err != nil {
-		return fmt.Sprintf("❌ `%s`: 追加に失敗しました: %v", feed.Title, err)
+		return fmt.Sprintf("❌ `%s`: %v", rawURL, err)
+	}
+
+	id, err := AddFeed(h.db, result.FeedURL, result.Title)
+	if err != nil {
+		return fmt.Sprintf("❌ `%s`: 追加に失敗しました: %v", result.Title, err)
 	}
 
 	// 既存記事を既読にして初回大量投稿を防ぐ
-	for _, item := range feed.Items {
-		guid := item.GUID
-		if guid == "" {
-			guid = item.Link
+	fp := gofeed.NewParser()
+	if feed, err := fp.ParseURL(result.FeedURL); err == nil {
+		for _, item := range feed.Items {
+			guid := item.GUID
+			if guid == "" {
+				guid = item.Link
+			}
+			MarkArticleSeen(h.db, id, guid)
 		}
-		MarkArticleSeen(h.db, id, guid)
 	}
 
-	return fmt.Sprintf("✅ `%s` を追加しました (ID: %d)", feed.Title, id)
+	stageInfo := ""
+	if result.Stage > 0 {
+		stageInfo = fmt.Sprintf(" (Stage %dで検出)", result.Stage)
+	}
+	return fmt.Sprintf("✅ `%s` を追加しました (ID: %d)%s", result.Title, id, stageInfo)
 }
 
 func (h *Handler) handleList() string {
