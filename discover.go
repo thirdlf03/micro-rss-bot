@@ -188,7 +188,7 @@ func discoverFromRSSBridge(rawURL, rssBridgeURL string) (string, error) {
 	return feeds[0].URL, nil
 }
 
-var geminiEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="
+var geminiEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key="
 
 const cssSelectorSystemPrompt = `You extract CSS selectors from HTML to build an RSS feed. Respond with ONLY a JSON object. No markdown, no explanation.`
 
