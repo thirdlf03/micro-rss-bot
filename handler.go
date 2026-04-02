@@ -156,6 +156,16 @@ func (h *Handler) handleAdd(sub *discordgo.ApplicationCommandInteractionDataOpti
 	if err != nil {
 		return fmt.Sprintf("❌ 追加に失敗しました: %v", err)
 	}
+
+	// 既存記事を既読にして初回大量投稿を防ぐ
+	for _, item := range feed.Items {
+		guid := item.GUID
+		if guid == "" {
+			guid = item.Link
+		}
+		MarkArticleSeen(h.db, id, guid)
+	}
+
 	return fmt.Sprintf("✅ `%s` を追加しました (ID: %d)", feed.Title, id)
 }
 
