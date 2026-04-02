@@ -250,3 +250,63 @@ func TestDiscoverFromLLM(t *testing.T) {
 		t.Errorf("expected CssSelectorBridge URL, got %s", result)
 	}
 }
+
+func TestDiscoverFeed_FullPipeline(t *testing.T) {
+	blogSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(testHTMLNoFeed))
+	}))
+	defer blogSrv.Close()
+
+	feedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(testRSS))
+	}))
+	defer feedSrv.Close()
+
+	bridgeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(fmt.Sprintf(`[{"url":"%s"}]`, feedSrv.URL)))
+	}))
+	defer bridgeSrv.Close()
+
+	t.Setenv("RSS_BRIDGE_URL", bridgeSrv.URL)
+	t.Setenv("GEMINI_API_KEY", "")
+
+	var stages []int
+	progress := func(stage int, msg string) {
+		stages = append(stages, stage)
+	}
+
+	result, err := DiscoverFeed(blogSrv.URL, progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stage != 2 {
+		t.Errorf("expected Stage 2, got Stage %d", result.Stage)
+	}
+	if result.Title != "Test Feed" {
+		t.Errorf("expected title 'Test Feed', got '%s'", result.Title)
+	}
+	if len(stages) < 2 || stages[0] != 1 || stages[1] != 2 {
+		t.Errorf("expected stages [1,2], got %v", stages)
+	}
+}
+
+func TestDiscoverFeed_DirectRSSURL(t *testing.T) {
+	feedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(testRSS))
+	}))
+	defer feedSrv.Close()
+
+	progress := func(stage int, msg string) {}
+
+	result, err := DiscoverFeed(feedSrv.URL, progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stage != 1 {
+		t.Errorf("expected Stage 1, got Stage %d", result.Stage)
+	}
+}
