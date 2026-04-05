@@ -69,6 +69,40 @@ func (fp *ForumPoster) Post(a Article) error {
 	return err
 }
 
+// tagGroups maps keywords to broader group tag names.
+// When a category or title contains a keyword, the group name is used instead.
+var tagGroups = map[string][]string{
+	"Programming": {"go", "golang", "rust", "python", "javascript", "typescript", "ruby", "java", "kotlin", "swift", "c++", "cpp", "haskell", "elixir", "zig", "programming"},
+	"AI":            {"ai", "machine learning", "llm", "gpt", "claude", "gemini", "openai", "anthropic", "deep learning", "neural", "transformer"},
+	"Security":      {"security", "cve", "vulnerability", "exploit", "patch", "脆弱性", "セキュリティ"},
+	"Infrastructure": {"linux", "docker", "kubernetes", "k8s", "nginx", "terraform", "ansible", "インフラ"},
+	"Cloud":         {"cloud", "aws", "gcp", "azure", "vercel", "cloudflare", "クラウド"},
+	"Release":       {"release", "released", "リリース", "アップデート", "update", "version"},
+	"Database":      {"database", "postgresql", "postgres", "mysql", "sqlite", "redis", "mongodb", "データベース", "db"},
+	"Frontend":      {"react", "vue", "svelte", "next.js", "nextjs", "nuxt", "css", "html", "frontend", "フロントエンド"},
+	"Backend":       {"api", "graphql", "grpc", "rest", "backend", "バックエンド", "サーバー"},
+	"DevOps":        {"ci/cd", "cicd", "github actions", "jenkins", "devops", "monitoring", "observability"},
+}
+
+// normalizeToGroup checks if a text contains keywords that map to a group tag.
+func normalizeToGroup(text string) []string {
+	lower := strings.ToLower(text)
+	seen := make(map[string]bool)
+	var groups []string
+	for group, keywords := range tagGroups {
+		for _, kw := range keywords {
+			if strings.Contains(lower, kw) {
+				if !seen[group] {
+					seen[group] = true
+					groups = append(groups, group)
+				}
+				break
+			}
+		}
+	}
+	return groups
+}
+
 // matchTagResult holds the result of tag matching (before Discord API calls).
 type matchTagResult struct {
 	MatchedIDs  []string
@@ -80,31 +114,50 @@ type matchTagResult struct {
 func matchTags(a Article, existingTags map[string]string) matchTagResult {
 	var tagIDs []string
 	var newTagNames []string
+	seen := make(map[string]bool)
 
-	// 1. RSS categories (highest priority)
+	addTag := func(name string) {
+		lower := strings.ToLower(name)
+		if seen[lower] {
+			return
+		}
+		seen[lower] = true
+		if id, ok := existingTags[lower]; ok {
+			tagIDs = append(tagIDs, id)
+		} else {
+			newTagNames = append(newTagNames, name)
+		}
+	}
+
+	// 1. RSS categories → normalize to groups
 	if len(a.Categories) > 0 {
 		for _, cat := range a.Categories {
-			if id, ok := existingTags[strings.ToLower(cat)]; ok {
-				tagIDs = append(tagIDs, id)
+			groups := normalizeToGroup(cat)
+			if len(groups) > 0 {
+				for _, g := range groups {
+					addTag(g)
+				}
 			} else {
-				newTagNames = append(newTagNames, cat)
+				addTag(cat)
 			}
 		}
-	} else {
-		// 2. Match title keywords against existing tags
-		titleLower := strings.ToLower(a.Title)
-		for name, id := range existingTags {
-			if strings.Contains(titleLower, name) {
-				tagIDs = append(tagIDs, id)
+	}
+
+	// 2. Title keyword grouping (always, as supplemental)
+	titleGroups := normalizeToGroup(a.Title)
+	for _, g := range titleGroups {
+		addTag(g)
+	}
+
+	// 3. Fallback: feed title grouping, then feed title as-is
+	if len(tagIDs) == 0 && len(newTagNames) == 0 && a.FeedTitle != "" {
+		feedGroups := normalizeToGroup(a.FeedTitle)
+		if len(feedGroups) > 0 {
+			for _, g := range feedGroups {
+				addTag(g)
 			}
-		}
-		// 3. Fallback: use feed title as tag
-		if len(tagIDs) == 0 && a.FeedTitle != "" {
-			if id, ok := existingTags[strings.ToLower(a.FeedTitle)]; ok {
-				tagIDs = append(tagIDs, id)
-			} else {
-				newTagNames = append(newTagNames, a.FeedTitle)
-			}
+		} else {
+			addTag(a.FeedTitle)
 		}
 	}
 

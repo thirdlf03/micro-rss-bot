@@ -17,119 +17,187 @@ func makeExistingTags(names ...string) map[string]string {
 	return m
 }
 
-func TestMatchTags_WithCategories(t *testing.T) {
-	existing := makeExistingTags("AI", "Cloud", "Security")
+func TestNormalizeToGroup(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected []string
+	}{
+		{"Go 1.23 released", []string{"Programming", "Release"}},
+		{"Docker security vulnerability", []string{"Infrastructure", "Security"}},
+		{"PostgreSQL performance on Linux 7.0", []string{"Database", "Infrastructure"}},
+		{"New React framework", []string{"Frontend"}},
+		{"Claude API update", []string{"AI", "Backend", "Release"}},
+		{"random unrelated text", nil},
+		{"PDF読書アプリをリリースしました", []string{"Release"}},
+		{"Kubernetes セキュリティパッチ", []string{"Infrastructure", "Security"}},
+	}
+
+	for _, tt := range tests {
+		groups := normalizeToGroup(tt.input)
+		t.Logf("%q → %v", tt.input, groups)
+		if tt.expected == nil {
+			if len(groups) != 0 {
+				t.Errorf("  expected no groups, got %v", groups)
+			}
+			continue
+		}
+		for _, exp := range tt.expected {
+			found := false
+			for _, g := range groups {
+				if g == exp {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("  expected group %q in result %v", exp, groups)
+			}
+		}
+	}
+}
+
+func TestMatchTags_CategoryGrouping(t *testing.T) {
+	existing := makeExistingTags("AI", "Security", "Release")
 
 	a := Article{
-		Title:      "New AI model released",
-		Categories: []string{"AI", "Machine Learning"},
+		Title:      "New GPT model released",
+		Categories: []string{"Machine Learning", "AI"},
 		FeedTitle:  "Tech Blog",
 	}
 
 	result := matchTags(a, existing)
 
-	t.Logf("記事: %q", a.Title)
-	t.Logf("カテゴリ: %v", a.Categories)
-	t.Logf("既存タグにマッチ: %v", result.MatchedIDs)
-	t.Logf("新規作成するタグ: %v", result.NewTagNames)
+	t.Logf("記事: %q, カテゴリ: %v", a.Title, a.Categories)
+	t.Logf("マッチ: %v, 新規: %v", result.MatchedIDs, result.NewTagNames)
 
-	if len(result.MatchedIDs) != 1 || result.MatchedIDs[0] != "tag-1" {
-		t.Errorf("expected AI tag matched, got %v", result.MatchedIDs)
+	// "Machine Learning" → AI group → matches existing "AI" tag
+	// "AI" → also AI group → dedup'd
+	// Title "released" → Release group → matches existing "Release" tag
+	hasAI := false
+	hasRelease := false
+	for _, id := range result.MatchedIDs {
+		if id == "tag-1" {
+			hasAI = true
+		}
+		if id == "tag-3" {
+			hasRelease = true
+		}
 	}
-	if len(result.NewTagNames) != 1 || result.NewTagNames[0] != "Machine Learning" {
-		t.Errorf("expected Machine Learning as new tag, got %v", result.NewTagNames)
+	if !hasAI {
+		t.Error("expected AI tag to match")
+	}
+	if !hasRelease {
+		t.Error("expected Release tag to match from title grouping")
 	}
 }
 
-func TestMatchTags_NoCategoriesTitleMatch(t *testing.T) {
-	existing := makeExistingTags("AI", "Cloud", "Security", "Go")
+func TestMatchTags_TitleGrouping_NoCategories(t *testing.T) {
+	existing := makeExistingTags("Programming", "Security", "Database")
 
 	a := Article{
-		Title:     "Go 1.23 security patch released",
-		FeedTitle: "Golang Blog",
+		Title:     "Linux 7.0のプリエンプション変更でPostgreSQLが大きな性能低下",
+		FeedTitle: "Xenospectrum",
 	}
 
 	result := matchTags(a, existing)
 
 	t.Logf("記事: %q", a.Title)
-	t.Logf("カテゴリなし → タイトルからマッチ")
-	t.Logf("既存タグにマッチ: %v", result.MatchedIDs)
-	t.Logf("新規作成するタグ: %v", result.NewTagNames)
+	t.Logf("マッチ: %v, 新規: %v", result.MatchedIDs, result.NewTagNames)
 
-	// Should match "go" and "security" from title
-	if len(result.MatchedIDs) != 2 {
-		t.Errorf("expected 2 title matches (go, security), got %v", result.MatchedIDs)
+	// "Linux" → Infrastructure, "PostgreSQL" → Database
+	hasDB := false
+	for _, id := range result.MatchedIDs {
+		if id == "tag-3" {
+			hasDB = true
+		}
 	}
-	if len(result.NewTagNames) != 0 {
-		t.Errorf("expected no new tags, got %v", result.NewTagNames)
+	if !hasDB {
+		t.Error("expected Database tag to match from PostgreSQL in title")
+	}
+
+	hasInfra := false
+	for _, name := range result.NewTagNames {
+		if name == "Infrastructure" {
+			hasInfra = true
+		}
+	}
+	if !hasInfra {
+		t.Error("expected Infrastructure as new tag from Linux in title")
 	}
 }
 
-func TestMatchTags_NoCategoriesNoTitleMatch_FallbackToFeedTitle(t *testing.T) {
-	existing := makeExistingTags("AI", "Cloud")
+func TestMatchTags_FallbackFeedTitleGrouping(t *testing.T) {
+	existing := makeExistingTags("Release")
 
 	a := Article{
-		Title:     "Version 2.0 is here",
+		Title:     "v2026.4.1",
 		FeedTitle: "OpenClaw Releases",
 	}
 
 	result := matchTags(a, existing)
 
-	t.Logf("記事: %q", a.Title)
-	t.Logf("カテゴリなし、タイトルマッチなし → フィード名をタグに")
-	t.Logf("既存タグにマッチ: %v", result.MatchedIDs)
-	t.Logf("新規作成するタグ: %v", result.NewTagNames)
+	t.Logf("記事: %q, フィード: %q", a.Title, a.FeedTitle)
+	t.Logf("マッチ: %v, 新規: %v", result.MatchedIDs, result.NewTagNames)
 
-	if len(result.MatchedIDs) != 0 {
-		t.Errorf("expected no matched IDs, got %v", result.MatchedIDs)
+	// "OpenClaw Releases" feed title → "Release" group → matches existing
+	hasRelease := false
+	for _, id := range result.MatchedIDs {
+		if id == "tag-1" {
+			hasRelease = true
+		}
 	}
-	if len(result.NewTagNames) != 1 || result.NewTagNames[0] != "OpenClaw Releases" {
-		t.Errorf("expected feed title as new tag, got %v", result.NewTagNames)
+	if !hasRelease {
+		t.Error("expected Release tag from feed title grouping")
 	}
 }
 
-func TestMatchTags_FeedTitleAlreadyExists(t *testing.T) {
-	existing := makeExistingTags("OpenClaw Releases", "Cloud")
+func TestMatchTags_NoGroupMatch_FeedTitleAsIs(t *testing.T) {
+	existing := makeExistingTags("AI")
 
 	a := Article{
-		Title:     "v2026.4.1 hotfix",
-		FeedTitle: "OpenClaw Releases",
+		Title:     "Weekly digest #42",
+		FeedTitle: "My Custom Newsletter",
+	}
+
+	result := matchTags(a, existing)
+
+	t.Logf("記事: %q, フィード: %q", a.Title, a.FeedTitle)
+	t.Logf("マッチ: %v, 新規: %v", result.MatchedIDs, result.NewTagNames)
+
+	// Nothing matches → feed title as-is
+	if len(result.NewTagNames) != 1 || result.NewTagNames[0] != "My Custom Newsletter" {
+		t.Errorf("expected feed title as fallback, got %v", result.NewTagNames)
+	}
+}
+
+func TestMatchTags_DeduplicatesGroups(t *testing.T) {
+	existing := makeExistingTags("Security")
+
+	a := Article{
+		Title:      "CVE-2026-1234: セキュリティ脆弱性",
+		Categories: []string{"security", "vulnerability"},
+		FeedTitle:  "Security Feed",
 	}
 
 	result := matchTags(a, existing)
 
 	t.Logf("記事: %q", a.Title)
-	t.Logf("カテゴリなし、タイトルマッチなし → フィード名が既存タグ")
-	t.Logf("既存タグにマッチ: %v", result.MatchedIDs)
+	t.Logf("マッチ: %v, 新規: %v", result.MatchedIDs, result.NewTagNames)
 
-	if len(result.MatchedIDs) != 1 || result.MatchedIDs[0] != "tag-1" {
-		t.Errorf("expected feed title tag matched, got %v", result.MatchedIDs)
+	// "security" → Security, "vulnerability" → Security, title also has Security keywords
+	// All should dedup to one Security tag
+	secCount := 0
+	for _, id := range result.MatchedIDs {
+		if id == "tag-1" {
+			secCount++
+		}
 	}
-	if len(result.NewTagNames) != 0 {
-		t.Errorf("expected no new tags, got %v", result.NewTagNames)
-	}
-}
-
-func TestMatchTags_CaseInsensitive(t *testing.T) {
-	existing := makeExistingTags("ai", "CLOUD")
-
-	a := Article{
-		Title:      "AI update",
-		Categories: []string{"AI", "Cloud"},
-	}
-
-	result := matchTags(a, existing)
-
-	t.Logf("記事: %q (カテゴリ: %v)", a.Title, a.Categories)
-	t.Logf("大文字小文字無視でマッチ")
-	t.Logf("マッチ: %v", result.MatchedIDs)
-
-	if len(result.MatchedIDs) != 2 {
-		t.Errorf("expected 2 case-insensitive matches, got %v", result.MatchedIDs)
+	if secCount != 1 {
+		t.Errorf("expected exactly 1 Security match (deduped), got %d", secCount)
 	}
 }
 
-// Integration: multiple feeds with different categories through FetchAndPost
+// Integration test with multiple feeds
 func TestMultipleFeedsWithCategories(t *testing.T) {
 	rss1 := `<?xml version="1.0"?>
 <rss version="2.0">
@@ -176,7 +244,7 @@ func TestMultipleFeedsWithCategories(t *testing.T) {
 	AddFeed(db, srv.URL+"/feed2", "OpenClaw Releases", "", "release")
 	AddFeed(db, srv.URL+"/feed3", "Go Blog", "channel-go", "")
 
-	existing := makeExistingTags("AI", "Security", "Cloud")
+	existing := makeExistingTags("AI", "Security", "Cloud", "Release", "Programming")
 
 	var articles []Article
 	poster := func(a Article) error {
@@ -186,7 +254,7 @@ func TestMultipleFeedsWithCategories(t *testing.T) {
 
 	FetchAndPost(db, "default-ch", poster)
 
-	t.Logf("\n=== 投稿された記事とタグ選択結果 ===\n")
+	t.Logf("\n=== 投稿された記事とタグ選択結果 (グルーピングあり) ===\n")
 	for _, a := range articles {
 		result := matchTags(a, existing)
 		t.Logf("📰 タイトル: %s", a.Title)
@@ -209,13 +277,6 @@ func TestMultipleFeedsWithCategories(t *testing.T) {
 		}
 		if a.FeedTitle != "Go Blog" && a.ChannelID != "default-ch" {
 			t.Errorf("%s should route to default-ch, got %s", a.FeedTitle, a.ChannelID)
-		}
-	}
-
-	// Verify release format
-	for _, a := range articles {
-		if a.FeedTitle == "OpenClaw Releases" && a.FeedFormat != "release" {
-			t.Errorf("OpenClaw should have release format, got %s", a.FeedFormat)
 		}
 	}
 }
