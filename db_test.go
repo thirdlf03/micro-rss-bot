@@ -16,6 +16,9 @@ func setupTestDB(t *testing.T) *sql.DB {
 	if err := InitDB(db); err != nil {
 		t.Fatal(err)
 	}
+	if err := MigrateDB(db); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { db.Close() })
 	return db
 }
@@ -44,7 +47,7 @@ func TestInitDB(t *testing.T) {
 func TestAddFeed(t *testing.T) {
 	db := setupTestDB(t)
 
-	id, err := AddFeed(db, "https://example.com/feed", "Example")
+	id, err := AddFeed(db, "https://example.com/feed", "Example", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +55,7 @@ func TestAddFeed(t *testing.T) {
 		t.Errorf("expected id=1, got %d", id)
 	}
 
-	_, err = AddFeed(db, "https://example.com/feed", "Example")
+	_, err = AddFeed(db, "https://example.com/feed", "Example", "", "")
 	if err == nil {
 		t.Error("expected error on duplicate feed")
 	}
@@ -60,8 +63,8 @@ func TestAddFeed(t *testing.T) {
 
 func TestListFeeds(t *testing.T) {
 	db := setupTestDB(t)
-	AddFeed(db, "https://a.com/feed", "A")
-	AddFeed(db, "https://b.com/feed", "B")
+	AddFeed(db, "https://a.com/feed", "A", "", "")
+	AddFeed(db, "https://b.com/feed", "B", "", "")
 
 	feeds, err := ListFeeds(db)
 	if err != nil {
@@ -74,7 +77,7 @@ func TestListFeeds(t *testing.T) {
 
 func TestEditFeed(t *testing.T) {
 	db := setupTestDB(t)
-	AddFeed(db, "https://old.com/feed", "Old")
+	AddFeed(db, "https://old.com/feed", "Old", "", "")
 
 	err := EditFeed(db, 1, "https://new.com/feed", "New")
 	if err != nil {
@@ -89,7 +92,7 @@ func TestEditFeed(t *testing.T) {
 
 func TestDeleteFeed(t *testing.T) {
 	db := setupTestDB(t)
-	AddFeed(db, "https://example.com/feed", "Example")
+	AddFeed(db, "https://example.com/feed", "Example", "", "")
 
 	err := DeleteFeed(db, 1)
 	if err != nil {
@@ -104,7 +107,7 @@ func TestDeleteFeed(t *testing.T) {
 
 func TestArticleSeen(t *testing.T) {
 	db := setupTestDB(t)
-	AddFeed(db, "https://example.com/feed", "Example")
+	AddFeed(db, "https://example.com/feed", "Example", "", "")
 
 	seen, err := IsArticleSeen(db, 1, "guid-123")
 	if err != nil {
@@ -114,7 +117,7 @@ func TestArticleSeen(t *testing.T) {
 		t.Error("expected not seen")
 	}
 
-	if err := MarkArticleSeen(db, 1, "guid-123"); err != nil {
+	if err := MarkArticleSeen(db, 1, "guid-123", "https://example.com/1", "Article 1"); err != nil {
 		t.Fatal(err)
 	}
 

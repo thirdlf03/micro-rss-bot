@@ -49,7 +49,7 @@ func TestAddSingleFeed_Success(t *testing.T) {
 	h := NewHandler(db, make(chan time.Duration, 1))
 
 	var progressMsgs []string
-	result := h.addSingleFeed(feedSrv.URL, func(msg string) {
+	result := h.addSingleFeed(feedSrv.URL, "", "", func(msg string) {
 		progressMsgs = append(progressMsgs, msg)
 	})
 
@@ -77,7 +77,7 @@ func TestAddSingleFeed_InvalidURL(t *testing.T) {
 	db := setupTestDB(t)
 	h := NewHandler(db, make(chan time.Duration, 1))
 
-	result := h.addSingleFeed("http://127.0.0.1:1/nonexistent", func(msg string) {})
+	result := h.addSingleFeed("http://127.0.0.1:1/nonexistent", "", "", func(msg string) {})
 
 	if !strings.Contains(result, "❌") {
 		t.Errorf("expected error, got: %s", result)
@@ -95,10 +95,10 @@ func TestAddSingleFeed_DuplicateFeed(t *testing.T) {
 	h := NewHandler(db, make(chan time.Duration, 1))
 
 	// Add first time
-	h.addSingleFeed(feedSrv.URL, func(msg string) {})
+	h.addSingleFeed(feedSrv.URL, "", "", func(msg string) {})
 
 	// Add again — should fail with duplicate error
-	result := h.addSingleFeed(feedSrv.URL, func(msg string) {})
+	result := h.addSingleFeed(feedSrv.URL, "", "", func(msg string) {})
 	if !strings.Contains(result, "❌") {
 		t.Errorf("expected error on duplicate, got: %s", result)
 	}
@@ -118,8 +118,8 @@ func TestHandleList_WithFeeds(t *testing.T) {
 	db := setupTestDB(t)
 	h := NewHandler(db, make(chan time.Duration, 1))
 
-	AddFeed(db, "https://example.com/feed", "Example")
-	AddFeed(db, "https://other.com/rss", "Other")
+	AddFeed(db, "https://example.com/feed", "Example", "", "")
+	AddFeed(db, "https://other.com/rss", "Other", "", "")
 
 	result := h.handleList()
 	if !strings.Contains(result, "Example") || !strings.Contains(result, "Other") {
@@ -164,7 +164,7 @@ func TestHandleDelete_NotFound(t *testing.T) {
 func TestHandleDelete_Success(t *testing.T) {
 	db := setupTestDB(t)
 	h := NewHandler(db, make(chan time.Duration, 1))
-	AddFeed(db, "https://example.com/feed", "Example")
+	AddFeed(db, "https://example.com/feed", "Example", "", "")
 
 	sub := mockDeleteOption(1)
 	result := h.handleDelete(sub)

@@ -14,6 +14,35 @@ import (
 
 var commands = []*discordgo.ApplicationCommand{
 	{
+		Name:        "forum",
+		Description: "Forum channel management",
+		Options: []*discordgo.ApplicationCommandOption{
+			{
+				Name:        "set",
+				Description: "Set forum channel for cross-posting",
+				Type:        discordgo.ApplicationCommandOptionSubCommand,
+				Options: []*discordgo.ApplicationCommandOption{
+					{
+						Name:        "channel",
+						Description: "Forum channel",
+						Type:        discordgo.ApplicationCommandOptionChannel,
+						Required:    true,
+					},
+				},
+			},
+			{
+				Name:        "remove",
+				Description: "Remove forum channel",
+				Type:        discordgo.ApplicationCommandOptionSubCommand,
+			},
+			{
+				Name:        "status",
+				Description: "Show current forum channel",
+				Type:        discordgo.ApplicationCommandOptionSubCommand,
+			},
+		},
+	},
+	{
 		Name:        "rss",
 		Description: "RSS feed management",
 		Options: []*discordgo.ApplicationCommandOption{
@@ -27,6 +56,18 @@ var commands = []*discordgo.ApplicationCommand{
 						Description: "Feed URLs (space-separated for multiple)",
 						Type:        discordgo.ApplicationCommandOptionString,
 						Required:    true,
+					},
+					{
+						Name:        "channel",
+						Description: "Post to this channel (default: global channel)",
+						Type:        discordgo.ApplicationCommandOptionChannel,
+						Required:    false,
+					},
+					{
+						Name:        "format",
+						Description: "Feed format: default or release",
+						Type:        discordgo.ApplicationCommandOptionString,
+						Required:    false,
 					},
 				},
 			},
@@ -95,6 +136,25 @@ var commands = []*discordgo.ApplicationCommand{
 					},
 				},
 			},
+			{
+				Name:        "format",
+				Description: "Set feed display format",
+				Type:        discordgo.ApplicationCommandOptionSubCommand,
+				Options: []*discordgo.ApplicationCommandOption{
+					{
+						Name:        "id",
+						Description: "Feed ID",
+						Type:        discordgo.ApplicationCommandOptionInteger,
+						Required:    true,
+					},
+					{
+						Name:        "type",
+						Description: "Format type: default or release",
+						Type:        discordgo.ApplicationCommandOptionString,
+						Required:    true,
+					},
+				},
+			},
 		},
 	},
 }
@@ -116,7 +176,41 @@ func (h *Handler) Handle(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 
 	data := i.ApplicationCommandData()
-	if data.Name != "rss" || len(data.Options) == 0 {
+	if len(data.Options) == 0 {
+		return
+	}
+
+	// Handle /forum commands
+	if data.Name == "forum" {
+		sub := data.Options[0]
+		var content string
+		switch sub.Name {
+		case "set":
+			ch := sub.Options[0].ChannelValue(nil)
+			if err := SetConfig(h.db, "forum_channel_id", ch.ID); err != nil {
+				content = fmt.Sprintf("❌ %v", err)
+			} else {
+				content = fmt.Sprintf("📋 フォーラム投稿先を <#%s> に設定しました", ch.ID)
+			}
+		case "remove":
+			SetConfig(h.db, "forum_channel_id", "")
+			content = "📋 フォーラム投稿を無効化しました"
+		case "status":
+			forumID, _ := GetConfig(h.db, "forum_channel_id")
+			if forumID == "" {
+				content = "📋 フォーラム投稿: 未設定"
+			} else {
+				content = fmt.Sprintf("📋 フォーラム投稿先: <#%s>", forumID)
+			}
+		}
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{Content: content},
+		})
+		return
+	}
+
+	if data.Name != "rss" {
 		return
 	}
 
@@ -150,6 +244,8 @@ func (h *Handler) Handle(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		content = h.handleChannel(sub)
 	case "interval":
 		content = h.handleInterval(sub)
+	case "format":
+		content = h.handleFormat(sub)
 	}
 
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -161,18 +257,31 @@ func (h *Handler) Handle(s *discordgo.Session, i *discordgo.InteractionCreate) {
 func (h *Handler) handleAdd(sub *discordgo.ApplicationCommandInteractionDataOption, updateProgress func(string)) string {
 	urls := strings.Fields(sub.Options[0].StringValue())
 
+	// Parse optional channel and format
+	channelID := ""
+	format := ""
+	for _, opt := range sub.Options[1:] {
+		switch opt.Name {
+		case "channel":
+			ch := opt.ChannelValue(nil)
+			channelID = ch.ID
+		case "format":
+			format = opt.StringValue()
+		}
+	}
+
 	if len(urls) == 1 {
-		return h.addSingleFeed(urls[0], updateProgress)
+		return h.addSingleFeed(urls[0], channelID, format, updateProgress)
 	}
 
 	var results []string
 	for _, u := range urls {
-		results = append(results, h.addSingleFeed(u, updateProgress))
+		results = append(results, h.addSingleFeed(u, channelID, format, updateProgress))
 	}
 	return strings.Join(results, "\n")
 }
 
-func (h *Handler) addSingleFeed(rawURL string, updateProgress func(string)) string {
+func (h *Handler) addSingleFeed(rawURL, channelID, format string, updateProgress func(string)) string {
 	progress := func(stage int, msg string) {
 		updateProgress(fmt.Sprintf("`%s`\n%s", rawURL, msg))
 	}
@@ -182,7 +291,7 @@ func (h *Handler) addSingleFeed(rawURL string, updateProgress func(string)) stri
 		return fmt.Sprintf("❌ `%s`: %v", rawURL, err)
 	}
 
-	id, err := AddFeed(h.db, result.FeedURL, result.Title)
+	id, err := AddFeed(h.db, result.FeedURL, result.Title, channelID, format)
 	if err != nil {
 		return fmt.Sprintf("❌ `%s`: 追加に失敗しました: %v", result.Title, err)
 	}
@@ -195,7 +304,7 @@ func (h *Handler) addSingleFeed(rawURL string, updateProgress func(string)) stri
 			if guid == "" {
 				guid = item.Link
 			}
-			MarkArticleSeen(h.db, id, guid)
+			MarkArticleSeen(h.db, id, guid, item.Link, item.Title)
 		}
 	}
 
@@ -203,7 +312,11 @@ func (h *Handler) addSingleFeed(rawURL string, updateProgress func(string)) stri
 	if result.Stage > 0 {
 		stageInfo = fmt.Sprintf(" (Stage %dで検出)", result.Stage)
 	}
-	return fmt.Sprintf("✅ `%s` を追加しました (ID: %d)%s", result.Title, id, stageInfo)
+	chInfo := ""
+	if channelID != "" {
+		chInfo = fmt.Sprintf(" → <#%s>", channelID)
+	}
+	return fmt.Sprintf("✅ `%s` を追加しました (ID: %d)%s%s", result.Title, id, stageInfo, chInfo)
 }
 
 func (h *Handler) handleList() string {
@@ -216,7 +329,14 @@ func (h *Handler) handleList() string {
 	}
 	msg := ""
 	for _, f := range feeds {
-		msg += fmt.Sprintf("#%d | %s | %s\n", f.ID, f.Title, f.URL)
+		line := fmt.Sprintf("#%d | %s | %s", f.ID, f.Title, f.URL)
+		if f.ChannelID != "" {
+			line += fmt.Sprintf(" → <#%s>", f.ChannelID)
+		}
+		if f.Format != "default" {
+			line += fmt.Sprintf(" [%s]", f.Format)
+		}
+		msg += line + "\n"
 	}
 	return msg
 }
@@ -260,6 +380,18 @@ func (h *Handler) handleInterval(sub *discordgo.ApplicationCommandInteractionDat
 	}
 	h.resetInterval <- time.Duration(minutes) * time.Minute
 	return fmt.Sprintf("⏱ ポーリング間隔を %d分 に変更しました", minutes)
+}
+
+func (h *Handler) handleFormat(sub *discordgo.ApplicationCommandInteractionDataOption) string {
+	id := sub.Options[0].IntValue()
+	formatType := sub.Options[1].StringValue()
+	if formatType != "default" && formatType != "release" {
+		return "❌ フォーマットは `default` または `release` を指定してください"
+	}
+	if err := SetFeedFormat(h.db, id, formatType); err != nil {
+		return fmt.Sprintf("❌ %v", err)
+	}
+	return fmt.Sprintf("✅ フィード #%d のフォーマットを `%s` に変更しました", id, formatType)
 }
 
 func RegisterCommands(s *discordgo.Session, h *Handler) {

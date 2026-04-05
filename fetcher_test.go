@@ -33,15 +33,15 @@ func TestFetchNewArticles(t *testing.T) {
 	defer srv.Close()
 
 	db := setupTestDB(t)
-	AddFeed(db, srv.URL, "Test")
+	AddFeed(db, srv.URL, "Test", "", "")
 
 	var posted []string
-	poster := func(title, link string) error {
-		posted = append(posted, title)
+	poster := func(a Article) error {
+		posted = append(posted, a.Title)
 		return nil
 	}
 
-	err := FetchAndPost(db, poster)
+	err := FetchAndPost(db, "test-channel", poster)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestFetchNewArticles(t *testing.T) {
 	}
 
 	posted = nil
-	FetchAndPost(db, poster)
+	FetchAndPost(db, "test-channel", poster)
 	if len(posted) != 0 {
 		t.Errorf("expected 0 posts on second run, got %d", len(posted))
 	}
@@ -61,11 +61,11 @@ func TestStartFetcher_Cancellation(t *testing.T) {
 	done := make(chan struct{})
 
 	db := setupTestDB(t)
-	poster := func(title, link string) error { return nil }
+	poster := func(a Article) error { return nil }
 	resetCh := make(chan time.Duration)
 
 	go func() {
-		StartFetcher(ctx, db, poster, 1*time.Second, resetCh)
+		StartFetcher(ctx, db, func() string { return "test-ch" }, poster, 1*time.Second, resetCh)
 		close(done)
 	}()
 
