@@ -72,16 +72,118 @@ func (fp *ForumPoster) Post(a Article) error {
 // tagGroups maps keywords to broader group tag names.
 // When a category or title contains a keyword, the group name is used instead.
 var tagGroups = map[string][]string{
-	"Programming": {"go", "golang", "rust", "python", "javascript", "typescript", "ruby", "java", "kotlin", "swift", "c++", "cpp", "haskell", "elixir", "zig", "programming"},
-	"AI":            {"ai", "machine learning", "llm", "gpt", "claude", "gemini", "openai", "anthropic", "deep learning", "neural", "transformer"},
-	"Security":      {"security", "cve", "vulnerability", "exploit", "patch", "脆弱性", "セキュリティ"},
-	"Infrastructure": {"linux", "docker", "kubernetes", "k8s", "nginx", "terraform", "ansible", "インフラ"},
-	"Cloud":         {"cloud", "aws", "gcp", "azure", "vercel", "cloudflare", "クラウド"},
-	"Release":       {"release", "released", "リリース", "アップデート", "update", "version"},
-	"Database":      {"database", "postgresql", "postgres", "mysql", "sqlite", "redis", "mongodb", "データベース", "db"},
-	"Frontend":      {"react", "vue", "svelte", "next.js", "nextjs", "nuxt", "css", "html", "frontend", "フロントエンド"},
-	"Backend":       {"api", "graphql", "grpc", "rest", "backend", "バックエンド", "サーバー"},
-	"DevOps":        {"ci/cd", "cicd", "github actions", "jenkins", "devops", "monitoring", "observability"},
+	"Programming": {
+		"go", "golang", "rust", "python", "javascript", "typescript",
+		"ruby", "java", "kotlin", "swift", "c++", "cpp", "c#", "csharp",
+		"haskell", "elixir", "gleam", "zig", "dart", "julia", "scala",
+		"php", "perl", "lua", "ocaml", "clojure", "erlang", "nim",
+		"programming", "プログラミング", "言語",
+	},
+	"AI": {
+		"ai", "artificial intelligence", "machine learning", "deep learning",
+		"llm", "gpt", "claude", "gemini", "openai", "anthropic",
+		"copilot", "cursor", "windsurf", "devin", "openclaw",
+		"claude code", "codex", "cline", "aider", "continue.dev",
+		"neural", "transformer", "diffusion", "rag",
+		"langchain", "llamaindex", "hugging face", "huggingface",
+		"tensorflow", "pytorch", "onnx", "mlops",
+		"stable diffusion", "midjourney", "dall-e",
+		"agent", "agentic", "mcp", "tool use",
+		"人工知能", "機械学習", "生成ai",
+	},
+	"Security": {
+		"security", "cve", "vulnerability", "exploit", "patch",
+		"malware", "ransomware", "phishing", "zero-day", "0day",
+		"authentication", "authorization", "oauth", "jwt",
+		"encryption", "tls", "ssl", "certificate",
+		"脆弱性", "セキュリティ", "攻撃", "不正アクセス",
+	},
+	"Infrastructure": {
+		"linux", "ubuntu", "debian", "fedora", "arch",
+		"docker", "kubernetes", "k8s", "podman", "containerd",
+		"nginx", "caddy", "traefik", "envoy",
+		"terraform", "ansible", "pulumi", "crossplane",
+		"systemd", "kernel", "ebpf", "wasm", "webassembly",
+		"インフラ", "サーバー構築",
+	},
+	"Cloud": {
+		"cloud", "aws", "gcp", "azure", "oracle cloud",
+		"vercel", "cloudflare", "netlify", "fly.io", "railway",
+		"lambda", "serverless", "edge computing", "cdn",
+		"s3", "ec2", "fargate", "cloud run", "app engine",
+		"クラウド",
+	},
+	"Release": {
+		"release", "released", "リリース", "アップデート",
+		"update", "upgrade", "version", "changelog",
+		"breaking change", "migration", "deprecated",
+		"新機能", "バージョン",
+	},
+	"Database": {
+		"database", "db", "sql",
+		"postgresql", "postgres", "mysql", "mariadb", "sqlite",
+		"redis", "mongodb", "dynamodb", "cassandra",
+		"elasticsearch", "opensearch", "clickhouse",
+		"supabase", "planetscale", "neon", "turso",
+		"データベース",
+	},
+	"Frontend": {
+		"react", "vue", "svelte", "angular", "solid", "qwik", "htmx",
+		"next.js", "nextjs", "nuxt", "remix", "astro", "gatsby",
+		"tailwind", "css", "html", "dom", "browser",
+		"frontend", "フロントエンド", "ui", "ux",
+	},
+	"Backend": {
+		"api", "graphql", "grpc", "rest", "openapi",
+		"fastapi", "express", "gin", "echo", "fiber", "hono",
+		"django", "rails", "spring", "laravel", "phoenix",
+		"microservice", "backend", "バックエンド",
+	},
+	"DevOps": {
+		"ci/cd", "cicd", "github actions", "jenkins", "circleci",
+		"devops", "sre", "monitoring", "observability",
+		"prometheus", "grafana", "datadog", "sentry",
+		"gitops", "argocd", "flux",
+	},
+	"Mobile": {
+		"ios", "android", "flutter", "react native", "expo",
+		"swiftui", "jetpack compose", "kotlin multiplatform", "kmp",
+		"モバイル", "アプリ開発",
+	},
+	"Web3": {
+		"blockchain", "ethereum", "solana", "web3",
+		"smart contract", "solidity", "defi", "nft",
+		"ブロックチェーン",
+	},
+	"OS": {
+		"windows", "macos", "freebsd", "nixos", "nix",
+		"os", "operating system", "オペレーティングシステム",
+	},
+	"Game": {
+		"unity", "unreal", "godot", "game dev", "gamedev",
+		"ゲーム開発", "ゲームエンジン",
+	},
+}
+
+// containsKeyword checks if text contains a keyword, using word boundary
+// matching for short keywords (<=3 chars) to avoid false positives like
+// "random" matching "dom" or "postgresql" matching "os".
+func containsKeyword(text, kw string) bool {
+	idx := strings.Index(text, kw)
+	if idx < 0 {
+		return false
+	}
+	// Short keywords need word boundary check
+	if len(kw) <= 3 {
+		before := idx == 0 || !isAlphaNum(text[idx-1])
+		after := idx+len(kw) >= len(text) || !isAlphaNum(text[idx+len(kw)])
+		return before && after
+	}
+	return true
+}
+
+func isAlphaNum(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 // normalizeToGroup checks if a text contains keywords that map to a group tag.
@@ -91,7 +193,7 @@ func normalizeToGroup(text string) []string {
 	var groups []string
 	for group, keywords := range tagGroups {
 		for _, kw := range keywords {
-			if strings.Contains(lower, kw) {
+			if containsKeyword(lower, kw) {
 				if !seen[group] {
 					seen[group] = true
 					groups = append(groups, group)
