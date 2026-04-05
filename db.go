@@ -56,7 +56,6 @@ func InitDB(db *sql.DB) error {
 		posted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(feed_id, guid)
 	);
-	CREATE INDEX IF NOT EXISTS idx_articles_link ON articles(link);
 	CREATE TABLE IF NOT EXISTS config (
 		key TEXT PRIMARY KEY,
 		value TEXT NOT NULL
