@@ -72,6 +72,31 @@ var commands = []*discordgo.ApplicationCommand{
 				},
 			},
 			{
+				Name:        "set",
+				Description: "Register a feed for a specific channel",
+				Type:        discordgo.ApplicationCommandOptionSubCommand,
+				Options: []*discordgo.ApplicationCommandOption{
+					{
+						Name:        "channel",
+						Description: "Target channel",
+						Type:        discordgo.ApplicationCommandOptionChannel,
+						Required:    true,
+					},
+					{
+						Name:        "url",
+						Description: "Feed URL",
+						Type:        discordgo.ApplicationCommandOptionString,
+						Required:    true,
+					},
+					{
+						Name:        "format",
+						Description: "Feed format: default or release",
+						Type:        discordgo.ApplicationCommandOptionString,
+						Required:    false,
+					},
+				},
+			},
+			{
 				Name:        "list",
 				Description: "List all feeds",
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
@@ -216,16 +241,22 @@ func (h *Handler) Handle(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 	sub := data.Options[0]
 
-	// "add" uses deferred response for progress display
-	if sub.Name == "add" {
+	// "add" / "set" use deferred response for progress display
+	if sub.Name == "add" || sub.Name == "set" {
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 		})
-		content := h.handleAdd(sub, func(msg string) {
+		update := func(msg string) {
 			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 				Content: &msg,
 			})
-		})
+		}
+		var content string
+		if sub.Name == "add" {
+			content = h.handleAdd(sub, update)
+		} else {
+			content = h.handleSet(sub, update)
+		}
 		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
 			Content: &content,
 		})
@@ -317,6 +348,21 @@ func (h *Handler) addSingleFeed(rawURL, channelID, format string, updateProgress
 		chInfo = fmt.Sprintf(" → <#%s>", channelID)
 	}
 	return fmt.Sprintf("✅ `%s` を追加しました (ID: %d)%s%s", result.Title, id, stageInfo, chInfo)
+}
+
+func (h *Handler) handleSet(sub *discordgo.ApplicationCommandInteractionDataOption, updateProgress func(string)) string {
+	var channelID, rawURL, format string
+	for _, opt := range sub.Options {
+		switch opt.Name {
+		case "channel":
+			channelID = opt.ChannelValue(nil).ID
+		case "url":
+			rawURL = opt.StringValue()
+		case "format":
+			format = opt.StringValue()
+		}
+	}
+	return h.addSingleFeed(rawURL, channelID, format, updateProgress)
 }
 
 func (h *Handler) handleList() string {
